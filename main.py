@@ -679,7 +679,7 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
         llms={
-            "researcher": "no_research",
+            "researcher": "asknews/news-summaries",
         },
     )
 
