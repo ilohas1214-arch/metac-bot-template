@@ -129,6 +129,18 @@ class SummerTemplateBot2026(ForecastBot):
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
     _structure_output_validation_samples = 2
 
+    # A depleted search-provider wallet must not turn into missing forecasts.
+    # The submission-rate gate decides whether the season can be judged at all,
+    # so losing research is survivable while losing submissions is not. When
+    # retrieval fails we fall back to forecasting without research and keep a
+    # marker in the published report so the affected questions stay
+    # identifiable long after the CI logs expire.
+    RESEARCH_UNAVAILABLE_MARKER = (
+        "[RESEARCH UNAVAILABLE] The retrieval provider failed for this "
+        "question, so this forecast was made without news research."
+    )
+    questions_without_research: list[str] = []
+
     ##################################### RESEARCH #####################################
 
     async def run_research(self, question: MetaculusQuestion) -> str:
@@ -153,31 +165,49 @@ class SummerTemplateBot2026(ForecastBot):
                 """
             )
 
-            if isinstance(researcher, GeneralLlm):
-                research = await researcher.invoke(prompt)
-            elif (
-                researcher == "asknews/news-summaries"
-                or researcher == "asknews/deep-research/low-depth"
-                or researcher == "asknews/deep-research/medium-depth"
-                or researcher == "asknews/deep-research/high-depth"
-            ):
-                research = await AskNewsSearcher().call_preconfigured_version(
-                    researcher, prompt
+            try:
+                if isinstance(researcher, GeneralLlm):
+                    research = await researcher.invoke(prompt)
+                elif (
+                    researcher == "asknews/news-summaries"
+                    or researcher == "asknews/deep-research/low-depth"
+                    or researcher == "asknews/deep-research/medium-depth"
+                    or researcher == "asknews/deep-research/high-depth"
+                ):
+                    research = await AskNewsSearcher().call_preconfigured_version(
+                        researcher, prompt
+                    )
+                elif researcher.startswith("smart-searcher"):
+                    model_name = researcher.removeprefix("smart-searcher/")
+                    searcher = SmartSearcher(
+                        model=model_name,
+                        temperature=0,
+                        num_searches_to_run=2,
+                        num_sites_per_search=10,
+                        use_advanced_filters=False,
+                    )
+                    research = await searcher.invoke(prompt)
+                elif (
+                    not researcher
+                    or researcher == "None"
+                    or researcher == "no_research"
+                ):
+                    research = ""
+                else:
+                    research = await self.get_llm("researcher", "llm").invoke(
+                        prompt
+                    )
+            except Exception as exc:  # noqa: BLE001 - any retrieval failure
+                # Submitting nothing costs more than forecasting unresearched.
+                logger.error(
+                    "RESEARCH_FAILED url=%s researcher=%r error=%s: %s",
+                    question.page_url,
+                    researcher,
+                    type(exc).__name__,
+                    exc,
                 )
-            elif researcher.startswith("smart-searcher"):
-                model_name = researcher.removeprefix("smart-searcher/")
-                searcher = SmartSearcher(
-                    model=model_name,
-                    temperature=0,
-                    num_searches_to_run=2,
-                    num_sites_per_search=10,
-                    use_advanced_filters=False,
-                )
-                research = await searcher.invoke(prompt)
-            elif not researcher or researcher == "None" or researcher == "no_research":
-                research = ""
-            else:
-                research = await self.get_llm("researcher", "llm").invoke(prompt)
+                self.questions_without_research.append(question.page_url)
+                research = self.RESEARCH_UNAVAILABLE_MARKER
             logger.info(f"Found Research for URL {question.page_url}:\n{research}")
             return research
 
@@ -739,3 +769,13 @@ if __name__ == "__main__":
         will_publish=publish_to_metaculus,
         tournament_url=TOURNAMENT_URLS.get(run_mode),
     )
+
+    # Silent degradation would make the season's scores uninterpretable, so
+    # say plainly how many forecasts went out without research.
+    degraded = SummerTemplateBot2026.questions_without_research
+    if degraded:
+        logger.warning(
+            "RESEARCH_FALLBACK_SUMMARY count=%d urls=%s",
+            len(degraded),
+            ", ".join(degraded),
+        )
