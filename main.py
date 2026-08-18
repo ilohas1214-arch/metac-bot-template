@@ -713,7 +713,16 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
         llms={
-            "researcher": "asknews/news-summaries",
+            # AskNews only grants tournament credits after identity verification
+            # (government ID) or a paid plan, so we research through OpenRouter
+            # instead: one billing rail, no extra account, and roughly $0.5 for
+            # a whole season. Passing a GeneralLlm rather than a bare string
+            # pins the dispatch branch in run_research explicitly.
+            "researcher": GeneralLlm(
+                model="openrouter/perplexity/sonar",
+                temperature=0,
+                timeout=60,
+            ),
         },
     )
 
