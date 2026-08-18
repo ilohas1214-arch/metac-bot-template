@@ -667,12 +667,16 @@ if __name__ == "__main__":
     publish_to_metaculus = True
     print_startup_banner(run_mode, will_publish=publish_to_metaculus)
 
-    # Configure the bot. The `llms=` block below is commented out to use
-    # whichever default models forecasting-tools picks based on your env vars;
-    # uncomment and edit to pin specific models.
+    # Configure the bot. The `llms=` block below pins only the researcher
+    # role; every other role falls back to whatever forecasting-tools picks
+    # based on your env vars. Add entries there to pin more models.
     template_bot = SummerTemplateBot2026(
         research_reports_per_question=1,
-        predictions_per_research_report=5,
+        # TEMPORARY (cost measurement): lowered 5 -> 1 so a Test Bot run
+        # (9 questions) stays under the OpenRouter new-account rate limit
+        # of 10 requests/min and can actually complete. Revisit before the
+        # Fall season starts.
+        predictions_per_research_report=1,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_to_metaculus,
         folder_to_save_reports_to=None,
