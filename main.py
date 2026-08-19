@@ -702,11 +702,13 @@ if __name__ == "__main__":
     # based on your env vars. Add entries there to pin more models.
     template_bot = SummerTemplateBot2026(
         research_reports_per_question=1,
-        # TEMPORARY (cost measurement): lowered 5 -> 1 so a Test Bot run
-        # (9 questions) stays under the OpenRouter new-account rate limit
-        # of 10 requests/min and can actually complete. Revisit before the
-        # Fall season starts.
-        predictions_per_research_report=1,
+        # Back to the template default of 5. It was lowered to 1 on 2026-08-18
+        # only to measure per-question cost, because at 5 the run tripped the
+        # OpenRouter new-account limit of 10 requests/min for openai/gpt-4o.
+        # Research now goes through OpenRouter too and is serialised by
+        # _max_concurrent_questions, which staggers the forecast calls, so this
+        # run is the check for whether 5 is viable for the Fall season.
+        predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_to_metaculus,
         folder_to_save_reports_to=None,
