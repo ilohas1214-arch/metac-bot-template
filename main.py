@@ -719,7 +719,10 @@ if __name__ == "__main__":
             # a whole season. Passing a GeneralLlm rather than a bare string
             # pins the dispatch branch in run_research explicitly.
             "researcher": GeneralLlm(
-                model="openrouter/perplexity/sonar",
+                # TEMPORARY (C-13 verification): a deliberately invalid model so
+                # run_research raises and the fallback path is exercised. Revert to
+                # "openrouter/perplexity/sonar" as soon as the test run is logged.
+                model="openrouter/does-not-exist/c13-fallback-test",
                 temperature=0,
                 timeout=60,
             ),
