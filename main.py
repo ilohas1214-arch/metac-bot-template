@@ -36,6 +36,7 @@ from forecasting_tools import (
     BinaryPrediction,
     PredictedOptionList,
     ReasonedPrediction,
+    RefreshingBucketRateLimiter,
     SmartSearcher,
     clean_indents,
     structure_output,
@@ -129,6 +130,19 @@ class SummerTemplateBot2026(ForecastBot):
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
     _structure_output_validation_samples = 2
 
+    # OpenRouter caps new accounts at 10 requests/min for openai/gpt-4o. At
+    # predictions_per_research_report=5 a run blew straight through it and the
+    # framework, which needs more than half the predictions to succeed, dropped
+    # whole questions. A missing forecast is far more costly than a slow one:
+    # the submission rate decides whether the season can be judged at all.
+    # Hitting the bottom of the bucket forces a full refill, which is what
+    # actually holds the per-minute ceiling after a burst.
+    _DEFAULT_LLM_REQUESTS_PER_MINUTE: float = 8.0
+    _default_llm_rate_limiter = RefreshingBucketRateLimiter(
+        capacity=_DEFAULT_LLM_REQUESTS_PER_MINUTE,
+        refresh_rate=_DEFAULT_LLM_REQUESTS_PER_MINUTE / 60.0,
+    )
+
     # A depleted search-provider wallet must not turn into missing forecasts.
     # The submission-rate gate decides whether the season can be judged at all,
     # so losing research is survivable while losing submissions is not. When
@@ -140,6 +154,11 @@ class SummerTemplateBot2026(ForecastBot):
         "question, so this forecast was made without news research."
     )
     questions_without_research: list[str] = []
+
+    async def _invoke_default_llm(self, prompt: str) -> str:
+        """Call the forecasting model, waiting when the rate limiter says to."""
+        await self._default_llm_rate_limiter.wait_till_able_to_acquire_resources(1)
+        return await self.get_llm("default", "llm").invoke(prompt)
 
     ##################################### RESEARCH #####################################
 
@@ -258,7 +277,7 @@ class SummerTemplateBot2026(ForecastBot):
         question: BinaryQuestion,
         prompt: str,
     ) -> ReasonedPrediction[float]:
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         binary_prediction: BinaryPrediction = await structure_output(
             reasoning,
@@ -332,7 +351,7 @@ class SummerTemplateBot2026(ForecastBot):
             Additionally, you may sometimes need to parse a 0% probability. Please do not skip options with 0% but rather make it an entry in your final list with 0% probability.
             """
         )
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         predicted_option_list: PredictedOptionList = await structure_output(
             text_to_structure=reasoning,
@@ -415,7 +434,7 @@ class SummerTemplateBot2026(ForecastBot):
         question: NumericQuestion,
         prompt: str,
     ) -> ReasonedPrediction[NumericDistribution]:
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         parsing_instructions = clean_indents(
             f"""
@@ -509,7 +528,7 @@ class SummerTemplateBot2026(ForecastBot):
         question: DateQuestion,
         prompt: str,
     ) -> ReasonedPrediction[NumericDistribution]:
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        reasoning = await self._invoke_default_llm(prompt)
         logger.info(f"Reasoning for URL {question.page_url}: {reasoning}")
         parsing_instructions = clean_indents(
             f"""
